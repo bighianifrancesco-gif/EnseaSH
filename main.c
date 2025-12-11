@@ -4,7 +4,6 @@
 
 #define WelcomeMSG "$ ./enseaSH \nWelcome to ENSEA Tiny Shell. \nType 'exit' to quit. \n"
 #define Prompt "enseash %"
-#define BufferSize 128
 static void print_welcome(void) {
     write(STDOUT_FILENO, WelcomeMSG, strlen(WelcomeMSG));
     }
@@ -14,7 +13,6 @@ static void print_prompt(void) {
 
 
 int main() {
-    char buffer[BufferSize];
     print_welcome();
     print_prompt();
 }
