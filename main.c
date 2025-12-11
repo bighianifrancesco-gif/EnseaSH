@@ -8,6 +8,7 @@
 #define buffer_size 128
 #define WelcomeMSG "$ ./enseaSH \nWelcome to ENSEA Tiny Shell. \nType 'exit' to quit. \n"
 #define Prompt "enseash %"
+#define ByeMSG "Bye bye..."
 
 static void print_welcome(void) {
     write(STDOUT_FILENO, WelcomeMSG, strlen(WelcomeMSG));
@@ -26,13 +27,13 @@ int main(void) {
 
     while ((read(STDIN_FILENO, buffer, buffer_size)) > 0) {
         buffer[strcspn(buffer, "\n")] = '\0';  // Remove newline character
-
         if (strlen(buffer) == 0) {
             print_prompt();
             continue;
         }
 
-        if (strcmp(buffer, "exit") == 0) {
+        if (strcmp(buffer,"exit")==0) {
+            write (STDOUT_FILENO, ByeMSG, strlen(ByeMSG));
             break;
         }
 
