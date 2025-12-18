@@ -5,7 +5,7 @@
 #include <sys/wait.h>
 #include <sys/types.h>
 #include <time.h>
-#include <fcntl.h> // Added for open() and O_WRONLY, etc.
+#include <fcntl.h>
 
 #define buffer_size 128
 #define MAX_ARGS 10
@@ -42,10 +42,11 @@ int main(void) {
     write(STDOUT_FILENO, WelcomeMSG, strlen(WelcomeMSG));
     print_prompt(0, has_status, 0);
 
+    /* --- MAIN SHELL ENGINE --- */
     ssize_t n;
     while ((n = read(STDIN_FILENO, buffer, buffer_size - 1)) > 0) {
         buffer[n] = '\0';
-        buffer[strcspn(buffer, "\n")] = '\0';
+        buffer[strcspn(buffer, "\n\r")] = '\0'; // Cleans both Unix (\n) and Windows (\r) line endings
 
         if (strlen(buffer) == 0) {
             print_prompt(status, has_status, last_duration);
@@ -57,6 +58,7 @@ int main(void) {
             break;
         }
 
+        /* --- STRING TOKENIZATION --- */
         char *argv[MAX_ARGS];
         int i = 0;
         char *token = strtok(buffer, " ");
@@ -73,31 +75,44 @@ int main(void) {
 
         clock_gettime(CLOCK_MONOTONIC, &start_time);
 
+        /* --- PROCESS EXECUTION --- */
         pid_t pid = fork();
         if (pid == 0) {
+            // Scan argv for redirection operators BEFORE executing
             for (int j = 0; argv[j] != NULL; j++) {
+
                 if (strcmp(argv[j], ">") == 0) {
+                    /* O_CREAT: create file if missing. O_TRUNC: wipe file if exists. 0644: rw-r--r-- */
                     int fd = open(argv[j+1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
                     if (fd < 0) { perror("open"); exit(1); }
-                    dup2(fd, STDOUT_FILENO);
-                    close(fd);
-                    argv[j] = NULL; // Command ends before the '>'
-                    argv[j+1] = NULL;
-                } else if (strcmp(argv[j], "<") == 0) {
+
+                    dup2(fd, STDOUT_FILENO); // Point Standard Output to our file descriptor
+                    close(fd);               // Clean up the original extra reference
+                    argv[j] = NULL;          // Truncate argv: execvp only sees the command, not the redirection symbols
+                    break;
+                }
+
+                else if (strcmp(argv[j], "<") == 0) {
                     int fd = open(argv[j+1], O_RDONLY);
                     if (fd < 0) { perror("open"); exit(1); }
-                    dup2(fd, STDIN_FILENO);
+
+                    dup2(fd, STDIN_FILENO);  // Point Standard Input to our file descriptor
                     close(fd);
                     argv[j] = NULL;
-                    argv[j+1] = NULL;
+                    break;
                 }
             }
-            execvp(argv[0], argv);
+
+            execvp(argv[0], argv); // Replaces child process image with the new program
             perror("execvp failed");
             exit(1);
-        } else {
+        }
+
+        else {
+            /* --- PARENT WAIT & TELEMETRY --- */
             waitpid(pid, &status, 0);
             clock_gettime(CLOCK_MONOTONIC, &end_time);
+
             last_duration = get_elapsed_ms(start_time, end_time);
             has_status = 1;
             print_prompt(status, has_status, last_duration);
