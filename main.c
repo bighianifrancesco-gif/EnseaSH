@@ -5,19 +5,16 @@
 #include <sys/wait.h>
 #include <sys/types.h>
 #include <time.h>
+#include <fcntl.h> // Added for open() and O_WRONLY, etc.
 
 #define buffer_size 128
+#define MAX_ARGS 10
 #define WelcomeMSG "$ ./enseash \nWelcome to ENSEA Tiny Shell. \nType 'exit' to quit. \n"
 #define Prompt "enseash %"
 #define ByeMSG "Bye bye...\n"
-#define MAX_ARGS 10
 
 long get_elapsed_ms(struct timespec start, struct timespec end) {
     return (end.tv_sec - start.tv_sec) * 1000 + (end.tv_nsec - start.tv_nsec) / 1000000;
-}
-
-static void print_welcome(void) {
-    write(STDOUT_FILENO, WelcomeMSG, strlen(WelcomeMSG));
 }
 
 static void print_prompt(int status, int has_status, long duration_ms) {
@@ -26,15 +23,13 @@ static void print_prompt(int status, int has_status, long duration_ms) {
         if (WIFEXITED(status)) {
             int len = snprintf(msg, sizeof(msg), "enseash [exit:%d|%ldms] %% ", WEXITSTATUS(status), duration_ms);
             write(STDOUT_FILENO, msg, len);
-            return;
-        }
-        if (WIFSIGNALED(status)) {
+        } else if (WIFSIGNALED(status)) {
             int len = snprintf(msg, sizeof(msg), "enseash [sign:%d|%ldms] %% ", WTERMSIG(status), duration_ms);
             write(STDOUT_FILENO, msg, len);
-            return;
         }
+    } else {
+        write(STDOUT_FILENO, Prompt " ", strlen(Prompt) + 1);
     }
-    write(STDOUT_FILENO, Prompt " ", strlen(Prompt) + 1);
 }
 
 int main(void) {
@@ -44,13 +39,12 @@ int main(void) {
     long last_duration = 0;
     struct timespec start_time, end_time;
 
-    print_welcome();
+    write(STDOUT_FILENO, WelcomeMSG, strlen(WelcomeMSG));
     print_prompt(0, has_status, 0);
 
-    // Use a variable to track read bytes to handle Ctrl+D correctly
     ssize_t n;
     while ((n = read(STDIN_FILENO, buffer, buffer_size - 1)) > 0) {
-        buffer[n] = '\0'; // Ensure buffer is null-terminated
+        buffer[n] = '\0';
         buffer[strcspn(buffer, "\n")] = '\0';
 
         if (strlen(buffer) == 0) {
@@ -72,22 +66,42 @@ int main(void) {
         }
         argv[i] = NULL;
 
+        if (argv[0] == NULL) {
+            print_prompt(status, has_status, last_duration);
+            continue;
+        }
+
         clock_gettime(CLOCK_MONOTONIC, &start_time);
 
         pid_t pid = fork();
         if (pid == 0) {
+            for (int j = 0; argv[j] != NULL; j++) {
+                if (strcmp(argv[j], ">") == 0) {
+                    int fd = open(argv[j+1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                    if (fd < 0) { perror("open"); exit(1); }
+                    dup2(fd, STDOUT_FILENO);
+                    close(fd);
+                    argv[j] = NULL; // Command ends before the '>'
+                    argv[j+1] = NULL;
+                } else if (strcmp(argv[j], "<") == 0) {
+                    int fd = open(argv[j+1], O_RDONLY);
+                    if (fd < 0) { perror("open"); exit(1); }
+                    dup2(fd, STDIN_FILENO);
+                    close(fd);
+                    argv[j] = NULL;
+                    argv[j+1] = NULL;
+                }
+            }
             execvp(argv[0], argv);
             perror("execvp failed");
-            exit(1); // Exit child if command fails
+            exit(1);
         } else {
             waitpid(pid, &status, 0);
             clock_gettime(CLOCK_MONOTONIC, &end_time);
-
             last_duration = get_elapsed_ms(start_time, end_time);
             has_status = 1;
             print_prompt(status, has_status, last_duration);
         }
     }
-
     return 0;
 }
